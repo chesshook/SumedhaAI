@@ -139,7 +139,10 @@ def get_chessmont_pgn(data_dir: Path) -> Path:
 
     attached = find_attached_file(Path("/kaggle/input"), {CHESSMONT_FILE, "chessmont.pgn"})
     if attached is not None:
-        log(f"Using attached elite human-game corpus: {attached}")
+        log(
+            f"Using attached elite human-game corpus: {attached} "
+            f"({attached.stat().st_size / (1024**3):.2f} GiB)"
+        )
         return attached
 
     log("Fetching the prebuilt Chessmont elite PGN file (no games are generated)...")
@@ -160,14 +163,16 @@ def get_chessmont_pgn(data_dir: Path) -> Path:
     )
     result_path = Path(result)
     if result_path.is_file():
-        return result_path
-    found = find_attached_file(result_path if result_path.is_dir() else output_dir, {CHESSMONT_FILE})
-    if found is None:
+        chosen = result_path
+    else:
+        chosen = find_attached_file(result_path if result_path.is_dir() else output_dir, {CHESSMONT_FILE})
+    if chosen is None:
         raise RuntimeError(
             "KaggleHub did not return chessmont.pgn.zst. Attach the public dataset "
             f"{CHESSMONT_DATASET} as a Kaggle Input and rerun."
         )
-    return found
+    log(f"Elite human PGN archive size: {chosen.stat().st_size / (1024**3):.2f} GiB")
+    return chosen
 
 
 def open_text_archive(path: Path):
