@@ -61,10 +61,15 @@ def main():
     assert eval_move_index == move_to_index(chess.Move.from_uci("e7e5"))
     assert black_to_move_value < 0.0
 
-    # Check Lichess UCI_Chess960 castling notation is translated to orthodox UCI.
-    castle_board = chess.Board("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
+    # Check Lichess UCI_Chess960 king-to-rook notation is canonicalised
+    # to orthodox UCI, using a minimal position with an unobstructed legal castle.
+    castle_board = chess.Board("4k3/8/8/8/8/8/8/4K2R w K - 0 1")
+    assert castle_board.is_valid()
     parsed_castle = parse_eval_move(castle_board, "e1h1")
-    assert parsed_castle == chess.Move.from_uci("e1g1")
+    assert parsed_castle == chess.Move.from_uci("e1g1"), (
+        f"UCI960 e1h1 should canonicalise to e1g1; got {parsed_castle!r}; "
+        f"legal castles={[m.uci() for m in castle_board.legal_moves if castle_board.is_castling(m)]}"
+    )
 
     # Exercise legal-move masking and a complete pair of tree simulations.
     searcher = NeuralPUCT(model, torch.device("cpu"), cpuct=1.5)
