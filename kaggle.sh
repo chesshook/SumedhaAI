@@ -45,7 +45,6 @@ if [[ ! -s "$SUMEDHA_OUTPUT_DIR/latest.pt" ]]; then
     fi
   fi
 fi
-exec > >(tee -a "$SUMEDHA_OUTPUT_DIR/training.log") 2>&1
 
 echo "[3/5] Checking the Kaggle runtime..."
 python - <<'PY'
