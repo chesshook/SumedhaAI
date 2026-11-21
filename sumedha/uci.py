@@ -271,7 +271,7 @@ class SumedhaUCI:
                 cp = int(np.clip(value, -1.0, 1.0) * 1000)
                 pv_text = " ".join(m.uci() for m in pv)
                 self.send(
-                    f"info depth {completed} nodes {completed} score cp {cp}"
+                    f"info nodes {completed} score cp {cp}"
                     + (f" pv {pv_text}" if pv_text else "")
                 )
                 self.send(f"bestmove {move.uci() if move is not None else '0000'}")
