@@ -24,6 +24,7 @@ export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
 export SUMEDHA_DATA_DIR="${SUMEDHA_DATA_DIR:-/kaggle/working/sumedha-data}"
 export SUMEDHA_OUTPUT_DIR="${SUMEDHA_OUTPUT_DIR:-/kaggle/working/sumedha-output}"
 mkdir -p "$SUMEDHA_DATA_DIR" "$SUMEDHA_OUTPUT_DIR"
+exec > >(tee -a "$SUMEDHA_OUTPUT_DIR/training.log") 2>&1
 
 echo "[3/5] Checking the Kaggle runtime..."
 python - <<'PY'
@@ -47,13 +48,13 @@ else
   python -m sumedha.data \
     --output "$DATA_FILE" \
     --games "${SUMEDHA_GAMES:-300}" \
-    --max-plies "${SUMEDHA_MAX_PLIES:-80}" \\
+    --max-plies "${SUMEDHA_MAX_PLIES:-80}" \
     --play-nodes "${SUMEDHA_PLAY_NODES:-250}" \
     --nodes "${SUMEDHA_NODES:-8000}" \
     --multipv "${SUMEDHA_MULTIPV:-6}" \
     --opening-positions "${SUMEDHA_OPENING_POSITIONS:-3000}" \
-    --pgn-positions "${SUMEDHA_PGN_POSITIONS:-5000}" \\
-    --pgn-game-limit "${SUMEDHA_PGN_GAME_LIMIT:-10000}" \\
+    --pgn-positions "${SUMEDHA_PGN_POSITIONS:-5000}" \
+    --pgn-game-limit "${SUMEDHA_PGN_GAME_LIMIT:-10000}" \
     --max-positions "${SUMEDHA_MAX_POSITIONS:-16000}" \
     --seed "${SUMEDHA_SEED:-20261121}"
 fi
