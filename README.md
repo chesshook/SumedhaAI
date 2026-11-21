@@ -79,7 +79,8 @@ Connect that process to a chess GUI that supports UCI engines. The first impleme
 - Policy: 20,480 logits, covering from-square, to-square and promotion type.
 - Value: scalar in [-1, 1], from the current side-to-move perspective.
 - Loss: soft-target policy cross-entropy plus Huber value loss.
-- Optimizer: AdamW, mixed precision on CUDA, cosine learning-rate schedule.
+- Optimizer: AdamW, FP16 autocast for CUDA operations, cosine learning-rate schedule; model parameters and saved checkpoints remain FP32.
+- No weight quantization and no dataset compression; position arrays are stored as ordinary uncompressed NPZ data.
 - Multi-GPU: one process per GPU using NCCL DistributedDataParallel.
 - Resume: the latest checkpoint contains model, optimizer, scheduler, scaler, epoch and step state.
 
