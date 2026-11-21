@@ -119,7 +119,7 @@ class NeuralPUCT:
 
         completed = 0
         while completed < simulations and not stop_event.is_set():
-            if deadline is not None and time.monotonic() >= deadline:
+            if completed > 0 and deadline is not None and time.monotonic() >= deadline:
                 break
             node = root
             path: list[tuple[Node, Edge]] = []
