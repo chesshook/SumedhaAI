@@ -9,6 +9,7 @@ import torch
 from .encoding import POLICY_SIZE, encode_board, legal_move_indices, move_to_index
 from .model import SumedhaNet
 from .uci import NeuralPUCT
+from .data import parse_eval_move, read_eval_row
 
 
 def main():
@@ -46,6 +47,25 @@ def main():
     assert value.shape == (1,)
     assert torch.isfinite(policy).all() and torch.isfinite(value).all()
 
+    # Check precomputed evaluation import (four-field FEN, White POV score).
+    labelled = read_eval_row({
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq -",
+        "line": "e7e5 e2e4",
+        "depth": 30,
+        "knodes": 50000,
+        "cp": 120,
+        "mate": None,
+    })
+    assert labelled is not None
+    _, eval_move_index, black_to_move_value = labelled
+    assert eval_move_index == move_to_index(chess.Move.from_uci("e7e5"))
+    assert black_to_move_value < 0.0
+
+    # Check Lichess UCI_Chess960 castling notation is translated to orthodox UCI.
+    castle_board = chess.Board("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
+    parsed_castle = parse_eval_move(castle_board, "e1h1")
+    assert parsed_castle == chess.Move.from_uci("e1g1")
+
     # Exercise legal-move masking and a complete pair of tree simulations.
     searcher = NeuralPUCT(model, torch.device("cpu"), cpuct=1.5)
     best, completed, _, _ = searcher.search(start, 2, threading.Event())
@@ -54,7 +74,8 @@ def main():
 
     print(
         "SUMEDHA SELF-TEST PASSED | board encoding | move indexing | "
-        "en-passant | promotions | policy/value heads | PUCT search",
+        "en-passant | promotions | Parquet-data parser | UCI960 castling | "
+        "policy/value heads | PUCT search",
         flush=True,
     )
 
