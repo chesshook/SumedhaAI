@@ -10,8 +10,8 @@ The Kaggle data pipeline does **not** launch Stockfish, run self-play, analyse p
 
 Three fixed Parquet shards from [Lichess/chess-position-evaluations](https://huggingface.co/datasets/Lichess/chess-position-evaluations):
 
-- `0000.parquet` — approximately 2.22 GB
-- `0001.parquet` — approximately 2.22 GB
+- `data_0000.parquet` — 2,190,285,438 bytes
+- `data_0001.parquet` — 2,189,026,305 bytes
 - `0011.parquet` — approximately 2.19 GB
 
 Together these are approximately **6.6 GB of already-calculated Stockfish evaluations**. Rows contain a position FEN, a principal variation, search depth, searched kilo-nodes and a centipawn or mate score. The source data is published under CC0. SUMEDHA checks the SHA-256 of each shard before reading it.
@@ -22,7 +22,7 @@ The loader reads selected row groups from each shard, filters for depth and node
 
 SUMEDHA fetches only `chessmont.pgn.zst` from the public Kaggle dataset [Chessmont Big Dataset](https://www.kaggle.com/datasets/chessmontdb/chessmont-big-dataset). Its published description lists **21.5+ million unique games** merged from Lichess 2500+ history, Chess.com top-10K blitz 2500+, TWIC and PGN Mentor.
 
-The loader samples opening-phase and later-game positions. Its policy label is the actual move recorded by the human player; its value target is based on the recorded game result. There is no move generation or engine re-analysis.
+The published corpus contains 21.5+ million unique games (the site describes its main game sources as 2500+ Elo). The loader logs the actual compressed archive size after download, then samples opening-phase and later-game positions. Its policy label is the actual move recorded by the human player; its value target is based on the recorded game result. There is no move generation or engine re-analysis.
 
 Chessmont declares CC BY-SA 4.0 for its collection. The dataset metadata records the source and license; see the [Chessmont Open Database](https://database.chessmont.com/en/) and [CC BY-SA 4.0 terms](https://creativecommons.org/licenses/by-sa/4.0/). Lichess evaluation data is CC0; see [Lichess Open Database](https://database.lichess.org/).
 
