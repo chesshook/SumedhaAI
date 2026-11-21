@@ -487,7 +487,7 @@ def main() -> None:
         }
         temp_output = output.with_suffix(output.suffix + ".tmp")
         with temp_output.open("wb") as stream:
-            np.savez_compressed(
+            np.savez(
                 stream,
                 x=np.stack(x_rows).astype(np.float16),
                 move_indices=np.asarray(move_rows, dtype=np.int32),
