@@ -513,7 +513,10 @@ def main() -> None:
         "sources": source_counts,
         "eval_source": "Lichess/chess-position-evaluations",
         "eval_source_license": "CC0-1.0",
-        "eval_shards": [p.name for p in eval_paths],
+        "eval_source_revision": "111076b932df2996c5647135444b335551117a0f",
+        "eval_shards": {
+            shard["name"]: shard["sha256"] for shard in EVAL_SHARDS
+        },
         "human_source": CHESSMONT_DATASET,
         "human_source_file": human_pgn.name,
         "human_source_license": "CC BY-SA 4.0 (as declared by Chessmont Open Database)",
