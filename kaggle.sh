@@ -63,6 +63,10 @@ PY
 python -m sumedha.selftest
 
 DATA_FILE="$SUMEDHA_DATA_DIR/positions.npz"
+if [[ "${SUMEDHA_REBUILD_DATA:-0}" == "1" ]]; then
+  echo "SUMEDHA_REBUILD_DATA=1: rebuilding labelled data from current inputs/settings."
+  rm -f "$DATA_FILE"
+fi
 if [[ -s "$DATA_FILE" ]]; then
   echo "[4/5] Existing dataset found; reusing it: $DATA_FILE"
 else
