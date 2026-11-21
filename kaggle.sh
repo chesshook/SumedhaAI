@@ -26,6 +26,27 @@ export SUMEDHA_OUTPUT_DIR="${SUMEDHA_OUTPUT_DIR:-/kaggle/working/sumedha-output}
 mkdir -p "$SUMEDHA_DATA_DIR" "$SUMEDHA_OUTPUT_DIR"
 exec > >(tee -a "$SUMEDHA_OUTPUT_DIR/training.log") 2>&1
 
+# Restore outputs attached from an earlier saved Kaggle Notebook version.
+if [[ ! -s "$SUMEDHA_DATA_DIR/positions.npz" ]]; then
+  PREVIOUS_DATA="$(find /kaggle/input -type f -path '*/sumedha-data/positions.npz' -print -quit 2>/dev/null || true)"
+  if [[ -n "$PREVIOUS_DATA" ]]; then
+    echo "Restoring the previous labelled dataset..."
+    cp "$PREVIOUS_DATA" "$SUMEDHA_DATA_DIR/positions.npz"
+  fi
+fi
+if [[ ! -s "$SUMEDHA_OUTPUT_DIR/latest.pt" ]]; then
+  PREVIOUS_CHECKPOINT="$(find /kaggle/input -type f -path '*/sumedha-output/latest.pt' -print -quit 2>/dev/null || true)"
+  if [[ -n "$PREVIOUS_CHECKPOINT" ]]; then
+    echo "Restoring the previous SUMEDHA checkpoint..."
+    cp "$PREVIOUS_CHECKPOINT" "$SUMEDHA_OUTPUT_DIR/latest.pt"
+    PREVIOUS_OUTPUT_DIR="$(dirname "$PREVIOUS_CHECKPOINT")"
+    if [[ -s "$PREVIOUS_OUTPUT_DIR/best.pt" ]]; then
+      cp "$PREVIOUS_OUTPUT_DIR/best.pt" "$SUMEDHA_OUTPUT_DIR/best.pt"
+    fi
+  fi
+fi
+exec > >(tee -a "$SUMEDHA_OUTPUT_DIR/training.log") 2>&1
+
 echo "[3/5] Checking the Kaggle runtime..."
 python - <<'PY'
 import os, sys, torch
@@ -39,6 +60,7 @@ for i in range(torch.cuda.device_count()):
 if not torch.cuda.is_available():
     raise SystemExit("SUMEDHA needs a CUDA GPU. Select GPU T4 x2 in Kaggle Notebook settings.")
 PY
+python -m sumedha.selftest
 
 DATA_FILE="$SUMEDHA_DATA_DIR/positions.npz"
 if [[ -s "$DATA_FILE" ]]; then
