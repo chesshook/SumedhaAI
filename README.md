@@ -23,7 +23,7 @@ The initial model is a research baseline, not a claim of grandmaster or superhum
 !bash -c "$(curl -fsSL https://raw.githubusercontent.com/chesshook/SumedhaAI/main/kaggle.sh)"
 ```
 
-The launcher clones this repository, installs only the small Python chess dependency (it does not reinstall PyTorch), checks the visible GPUs, downloads and SHA256-verifies the official Stockfish 19 universal Linux binary, builds a chess-position dataset, then trains on every visible CUDA GPU. It uses both T4s automatically when two are available.
+The launcher clones this repository, installs only the small Python chess dependency (it does not reinstall PyTorch), runs a chess/model/search smoke test, checks the visible GPUs, restores prior notebook outputs when attached, downloads and SHA256-verifies the official Stockfish 19 universal Linux binary, builds a chess-position dataset, then trains on every visible CUDA GPU. It uses both T4s automatically when two are available.
 
 Outputs are written to:
 
@@ -32,7 +32,7 @@ Outputs are written to:
 - `/kaggle/working/sumedha-output/training.log`
 - `/kaggle/working/sumedha-data/positions.npz`
 
-Use Kaggle **Save Version** with notebook outputs enabled to preserve checkpoints and data after the session ends. Attach the saved output to a later notebook session to continue from the saved files.
+Use Kaggle **Save Version** with notebook outputs enabled to preserve checkpoints and data after the session ends. To continue in a fresh session, attach the previous notebook version under **Input → Notebook Output Files**; the launcher automatically restores `latest.pt`, `best.pt` and `positions.npz` when it finds them.
 
 ## Optional: add master games
 
