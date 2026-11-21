@@ -46,12 +46,15 @@ else
   echo "[4/5] Building Stockfish-labelled chess positions..."
   python -m sumedha.data \
     --output "$DATA_FILE" \
-    --games "${SUMEDHA_GAMES:-80}" \
-    --max-plies "${SUMEDHA_MAX_PLIES:-80}" \
+    --games "${SUMEDHA_GAMES:-300}" \
+    --max-plies "${SUMEDHA_MAX_PLIES:-80}" \\
+    --play-nodes "${SUMEDHA_PLAY_NODES:-250}" \
     --nodes "${SUMEDHA_NODES:-8000}" \
     --multipv "${SUMEDHA_MULTIPV:-6}" \
-    --opening-positions "${SUMEDHA_OPENING_POSITIONS:-1200}" \
-    --pgn-positions "${SUMEDHA_PGN_POSITIONS:-1800}" \
+    --opening-positions "${SUMEDHA_OPENING_POSITIONS:-3000}" \
+    --pgn-positions "${SUMEDHA_PGN_POSITIONS:-5000}" \\
+    --pgn-game-limit "${SUMEDHA_PGN_GAME_LIMIT:-10000}" \\
+    --max-positions "${SUMEDHA_MAX_POSITIONS:-16000}" \
     --seed "${SUMEDHA_SEED:-20261121}"
 fi
 
