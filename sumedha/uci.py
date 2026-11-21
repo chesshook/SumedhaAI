@@ -268,7 +268,8 @@ class SumedhaUCI:
                 move, completed, value, pv = self.searcher.search(
                     board_snapshot, simulations, self.stop_event, deadline
                 )
-                cp = int(np.clip(value, -1.0, 1.0) * 1000)
+                bounded_value = float(np.clip(value, -0.999, 0.999))
+                cp = int(600.0 * np.arctanh(bounded_value))
                 pv_text = " ".join(m.uci() for m in pv)
                 self.send(
                     f"info nodes {completed} score cp {cp}"
@@ -283,10 +284,6 @@ class SumedhaUCI:
         self.search_thread.start()
 
     def loop(self):
-        self.send("id name SUMEDHA AI 0.1")
-        self.send("id author chesshook")
-        self.send("option name Simulations type spin default " + str(self.default_simulations) + " min 1 max 1000000")
-        self.send("uciok")
         for raw_line in sys.stdin:
             line = raw_line.strip()
             if not line:
@@ -294,7 +291,12 @@ class SumedhaUCI:
             tokens = line.split()
             command, args = tokens[0], tokens[1:]
             try:
-                if command == "isready":
+                if command == "uci":
+                    self.send("id name SUMEDHA AI 0.1")
+                    self.send("id author chesshook")
+                    self.send("option name Simulations type spin default " + str(self.default_simulations) + " min 1 max 1000000")
+                    self.send("uciok")
+                elif command == "isready":
                     self.send("readyok")
                 elif command == "ucinewgame":
                     self.stop_search()
