@@ -46,19 +46,19 @@ Set environment variables before running the one-cell launcher to adjust resourc
 
 | Variable | Default | Meaning |
 |---|---:|---|
-| `SUMEDHA_GAMES` | 80 | Stockfish-vs-Stockfish games |
+| `SUMEDHA_GAMES` | 300 | Stockfish-vs-Stockfish games |
 | `SUMEDHA_MAX_PLIES` | 80 | Maximum half-moves per generated game |
-| `SUMEDHA_NODES` | 8000 | Stockfish nodes per labelled position |
+| `SUMEDHA_PLAY_NODES` | 250 | Cheap Stockfish nodes per move when generating games |\n| `SUMEDHA_NODES` | 8000 | Stockfish nodes per labelled position |
 | `SUMEDHA_MULTIPV` | 6 | Candidate moves evaluated per position |
-| `SUMEDHA_OPENING_POSITIONS` | 1200 | Opening positions sampled from the opening dataset |
-| `SUMEDHA_PGN_POSITIONS` | 1800 | Maximum PGN positions to re-score |
-| `SUMEDHA_EPOCHS` | 24 | Training epochs |
+| `SUMEDHA_OPENING_POSITIONS` | 3000 | Opening positions sampled from the opening dataset |
+| `SUMEDHA_PGN_POSITIONS` | 5000 | Maximum PGN positions to re-score |
+| `SUMEDHA_PGN_GAME_LIMIT` | 10000 | Maximum games scanned in attached PGN files |\n| `SUMEDHA_MAX_POSITIONS` | 16000 | Labelled positions in the final training set |\n| `SUMEDHA_EPOCHS` | 24 | Training epochs |
 | `SUMEDHA_BATCH_SIZE` | 128 | Batch size per GPU |
 | `SUMEDHA_CHANNELS` | 96 | Residual-network width |
 | `SUMEDHA_BLOCKS` | 6 | Number of residual blocks |
 | `SUMEDHA_WORKERS` | 2 | Data-loader workers per GPU |
 
-For a quick smoke run, reduce games, positions, nodes, epochs, channels and blocks. For stronger training, grow the dataset substantially and continue from saved checkpoints. A single Kaggle run is not enough to reproduce the scale of AlphaZero or Leela Chess Zero.
+For a quick smoke run, reduce games, positions, nodes, epochs, channels and blocks. For stronger training, grow the dataset substantially and continue from saved checkpoints. The default data build targets up to 16,000 labelled positions; it is a substantial starter corpus, not a billion-position engine training run. A single Kaggle run is not enough to reproduce the scale of AlphaZero or Leela Chess Zero.
 
 ## Use the trained network
 
