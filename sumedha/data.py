@@ -204,12 +204,11 @@ def parse_eval_move(board: chess.Board, uci: str) -> chess.Move | None:
         move = chess.Move.from_uci(uci)
     except ValueError:
         return None
-    if move in board.legal_moves:
-        return move
-
-    # Lichess evaluation exports describe the PV using UCI_Chess960 notation.
-    # In orthodox chess, a king-to-own-rook move is equivalent to standard UCI
-    # castling (king-to-c/g-file). Translate that representation when legal.
+    # Lichess evaluation exports can use UCI_Chess960 king-to-own-rook
+    # notation (for example e1h1). Canonicalise that representation BEFORE
+    # accepting a directly legal move: some chess-library/board-mode
+    # combinations may otherwise preserve the rook-square destination, while
+    # SUMEDHA's orthodox policy head and UCI output use e1g1/e1c1.
     piece = board.piece_at(move.from_square)
     rook = board.piece_at(move.to_square)
     if (
@@ -224,6 +223,9 @@ def parse_eval_move(board: chess.Board, uci: str) -> chess.Move | None:
         translated = chess.Move(move.from_square, target)
         if translated in board.legal_moves:
             return translated
+
+    if move in board.legal_moves:
+        return move
     return None
 
 
