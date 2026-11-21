@@ -34,17 +34,17 @@ from .encoding import encode_board, move_to_index
 EVAL_SHARDS = (
     {
         "name": "data_0000.parquet",
-        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/main/data/data_0000.parquet",
+        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/111076b932df2996c5647135444b335551117a0f/data/data_0000.parquet",
         "sha256": "b9306270a185eee925863b34f9d6d3d7c9b1ba772df251b2c76d421f7cf13d3b",
     },
     {
         "name": "data_0001.parquet",
-        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/main/data/data_0001.parquet",
+        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/111076b932df2996c5647135444b335551117a0f/data/data_0001.parquet",
         "sha256": "e5def35cb4ab5229019540c194e15740cd6a877a0871e655cecaca85efa1638a",
     },
     {
         "name": "data_0011.parquet",
-        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/main/data/data_0011.parquet",
+        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/111076b932df2996c5647135444b335551117a0f/data/data_0011.parquet",
         "sha256": "b9b6c20a2b7afa3cc251f339046a03332af09821009ce76192548d44efc4114b",
     },
 )
