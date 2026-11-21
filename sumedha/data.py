@@ -193,6 +193,35 @@ def score_to_value(score_white_cp: float, turn: chess.Color) -> float:
     return float(np.tanh(np.clip(score_stm, -6000.0, 6000.0) / 600.0))
 
 
+def parse_eval_move(board: chess.Board, uci: str) -> chess.Move | None:
+    """Parse normal UCI and Lichess UCI_Chess960 castling notation for standard boards."""
+    try:
+        move = chess.Move.from_uci(uci)
+    except ValueError:
+        return None
+    if move in board.legal_moves:
+        return move
+
+    # Lichess evaluation exports describe the PV using UCI_Chess960 notation.
+    # In orthodox chess, a king-to-own-rook move is equivalent to standard UCI
+    # castling (king-to-c/g-file). Translate that representation when legal.
+    piece = board.piece_at(move.from_square)
+    rook = board.piece_at(move.to_square)
+    if (
+        piece is not None and piece.piece_type == chess.KING
+        and rook is not None and rook.piece_type == chess.ROOK
+        and piece.color == rook.color
+        and chess.square_rank(move.from_square) == chess.square_rank(move.to_square)
+    ):
+        rank = chess.square_rank(move.from_square)
+        king_side = chess.square_file(move.to_square) > chess.square_file(move.from_square)
+        target = chess.square(6 if king_side else 2, rank)
+        translated = chess.Move(move.from_square, target)
+        if translated in board.legal_moves:
+            return translated
+    return None
+
+
 def read_eval_row(row: dict[str, Any]):
     fen = row.get("fen")
     line = row.get("line")
@@ -203,8 +232,8 @@ def read_eval_row(row: dict[str, Any]):
         if not board.is_valid() or board.is_game_over(claim_draw=True):
             return None
         first_move = str(line).split()[0]
-        move = chess.Move.from_uci(first_move)
-        if move not in board.legal_moves:
+        move = parse_eval_move(board, first_move)
+        if move is None:
             return None
 
         cp = row.get("cp")
@@ -321,9 +350,10 @@ def sample_human_games(
         while games_seen < games_limit and len(samples) < position_limit:
             try:
                 game = chess.pgn.read_game(stream)
-            except (ValueError, UnicodeError):
+            except (ValueError, UnicodeError) as exc:
                 rejected += 1
-                continue
+                log(f"Stopping on a malformed PGN stream record: {exc}")
+                break
             except zstandard.ZstdError as exc:
                 log(f"Reached the end of the available PGN stream: {exc}")
                 break
