@@ -1,34 +1,55 @@
-"""Build Stockfish-labelled SUMEDHA position datasets in Kaggle."""
+"""Build SUMEDHA training examples ONLY from precomputed chess corpora.
+
+No engine executable is installed or started here:
+- Lichess Stockfish-evaluated positions are downloaded as fixed Parquet shards.
+- Chessmont's prebuilt elite human PGN collection supplies played moves/opening lines.
+"""
 from __future__ import annotations
 
 import argparse
-import csv
-import gzip
 import hashlib
 import io
 import json
 import os
 import random
 import shutil
+import subprocess
 import sys
-import tarfile
 import urllib.request
 from pathlib import Path
-from typing import Iterable
+from typing import Any
 
 import chess
-import chess.engine
 import chess.pgn
 import numpy as np
+import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
+import zstandard
 
 from .encoding import encode_board, move_to_index
 
-STOCKFISH_URL = (
-    "https://github.com/official-stockfish/Stockfish/releases/download/sf_19/"
-    "stockfish-linux-x86-64-universal.tar.gz"
+# Three fixed 2.19–2.22 GB shards: approximately 6.6 GB of pre-calculated
+# Stockfish evaluations. Hashes are checked before any position is consumed.
+EVAL_SHARDS = (
+    {
+        "name": "0000.parquet",
+        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/refs%2Fconvert%2Fparquet/default/train/0000.parquet",
+        "sha256": "b076e82c6d108a4c2cb7036f694b9e20e8cc94684ccd6439f1ded731c20b34fe",
+    },
+    {
+        "name": "0001.parquet",
+        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/refs%2Fconvert%2Fparquet/default/train/0001.parquet",
+        "sha256": "f05591306dc10ec64ba0bf87d9124ed1e166a0d12b7bd02bc9e8f90333c695c3",
+    },
+    {
+        "name": "0011.parquet",
+        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/refs%2Fconvert%2Fparquet/default/train/0011.parquet",
+        "sha256": "fee93797a3d5e098b40c53e55e58ad609aac3f4b32b29b5c38dde74cdf0187a5",
+    },
 )
-STOCKFISH_SHA256 = "9defc0d4e55d49c65a6d042f3e571a39fcea499ade6dbe741b53b8c65e03611f"
-OPENINGS_BASE = "https://raw.githubusercontent.com/lichess-org/chess-openings/master"
+CHESSMONT_DATASET = "chessmontdb/chessmont-big-dataset"
+CHESSMONT_FILE = "chessmont.pgn.zst"
 
 
 def log(message: str) -> None:
@@ -43,463 +64,446 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def ensure_stockfish(cache_dir: Path) -> Path:
-    """Download the immutable official Stockfish 19 Linux release and verify it."""
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    binary = cache_dir / "stockfish"
-    if binary.is_file() and os.access(binary, os.X_OK):
-        return binary
-
-    archive = cache_dir / "stockfish-19-linux-x86-64-universal.tar.gz"
-    if not archive.is_file() or sha256_file(archive) != STOCKFISH_SHA256:
-        log("Downloading official Stockfish 19 universal Linux binary...")
-        request = urllib.request.Request(
-            STOCKFISH_URL, headers={"User-Agent": "SUMEDHA-AI-training/0.1"}
-        )
-        temporary = archive.with_suffix(".download")
-        with urllib.request.urlopen(request, timeout=60) as response, temporary.open("wb") as out:
-            shutil.copyfileobj(response, out, length=4 * 1024 * 1024)
-        actual = sha256_file(temporary)
-        if actual != STOCKFISH_SHA256:
-            temporary.unlink(missing_ok=True)
-            raise RuntimeError(
-                f"Stockfish archive SHA256 mismatch: expected {STOCKFISH_SHA256}, got {actual}"
-            )
-        temporary.replace(archive)
-
-    log("Verifying and extracting Stockfish...")
-    extract_dir = cache_dir / "stockfish-extract"
-    extract_dir.mkdir(exist_ok=True)
-    candidate = None
-    with tarfile.open(archive, "r:gz") as tar:
-        members = [
-            m for m in tar.getmembers()
-            if m.isfile() and Path(m.name).name.lower().startswith("stockfish") and m.size > 5_000_000
-        ]
-        if not members:
-            raise RuntimeError("The verified Stockfish archive did not contain an expected engine binary.")
-        # The universal package should contain one main executable; prefer the largest file.
-        member = max(members, key=lambda m: m.size)
-        source = tar.extractfile(member)
-        if source is None:
-            raise RuntimeError("Could not read the Stockfish executable from its archive.")
-        candidate = extract_dir / "stockfish"
-        with source, candidate.open("wb") as out:
-            shutil.copyfileobj(source, out, length=4 * 1024 * 1024)
-
-    candidate.chmod(0o755)
-    os.replace(candidate, binary)
-    shutil.rmtree(extract_dir, ignore_errors=True)
-    # Verify the executable actually speaks UCI before starting expensive labelling.
-    engine = chess.engine.SimpleEngine.popen_uci(str(binary), timeout=30)
-    try:
-        engine.ping()
-        log(f"Stockfish ready: {engine.id.get('name', 'unknown engine')}")
-    finally:
-        engine.quit()
-    return binary
+def find_attached_file(root: Path, names: set[str]) -> Path | None:
+    if not root.exists():
+        return None
+    matches = [p for p in root.rglob("*") if p.is_file() and p.name in names]
+    if not matches:
+        return None
+    return max(matches, key=lambda p: p.stat().st_size)
 
 
-def download_opening_positions(rng: random.Random, limit: int) -> tuple[list[str], list[str]]:
-    """Fetch the CC0 Lichess opening lines and return position and game-seed FENs."""
-    positions: list[str] = []
-    seeds: list[str] = []
-    if limit <= 0:
-        return positions, seeds
+def download_one(url: str, target: Path, expected_sha256: str) -> Path:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_file() and sha256_file(target) == expected_sha256:
+        log(f"Verified cached precomputed shard: {target.name}")
+        return target
+    target.unlink(missing_ok=True)
+    temporary = target.with_suffix(target.suffix + ".download")
+    temporary.unlink(missing_ok=True)
 
-    for letter in "abcde":
-        url = f"{OPENINGS_BASE}/{letter}.tsv"
-        try:
-            request = urllib.request.Request(url, headers={"User-Agent": "SUMEDHA-AI/0.1"})
-            with urllib.request.urlopen(request, timeout=30) as response:
-                text = response.read().decode("utf-8")
-        except Exception as exc:
-            log(f"Could not download opening volume {letter.upper()}: {exc}")
-            continue
-
-        reader = csv.DictReader(io.StringIO(text), delimiter="\t")
-        rows = list(reader)
-        rng.shuffle(rows)
-        for row in rows:
-            pgn_text = (row.get("pgn") or "").strip()
-            if not pgn_text:
-                continue
-            try:
-                game = chess.pgn.read_game(io.StringIO(pgn_text))
-                if game is None or game.errors:
-                    continue
-                board = game.board()
-                line_fens = []
-                for move in game.mainline_moves():
-                    if move not in board.legal_moves:
-                        break
-                    board.push(move)
-                    if board.is_game_over(claim_draw=True):
-                        break
-                    line_fens.append(board.fen())
-                if line_fens:
-                    seeds.append(line_fens[-1])
-                    # Keep a spread of positions, not only the end of each variation.
-                    stride = max(1, len(line_fens) // 4)
-                    positions.extend(line_fens[::stride])
-            except Exception:
-                continue
-            if len(positions) >= limit * 3 and len(seeds) >= 200:
+    log(f"Downloading precomputed Stockfish shard {target.name}...")
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "SUMEDHA-AI-precomputed-dataset/0.2"},
+    )
+    received = 0
+    last_report = 0
+    with urllib.request.urlopen(request, timeout=120) as response, temporary.open("wb") as out:
+        while True:
+            chunk = response.read(8 * 1024 * 1024)
+            if not chunk:
                 break
-        if len(positions) >= limit * 3 and len(seeds) >= 200:
+            out.write(chunk)
+            received += len(chunk)
+            if received - last_report >= 256 * 1024 * 1024:
+                log(f"  {target.name}: {received / (1024**3):.2f} GiB downloaded")
+                last_report = received
+    actual = sha256_file(temporary)
+    if actual != expected_sha256:
+        temporary.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"SHA256 mismatch for {target.name}: expected {expected_sha256}, got {actual}"
+        )
+    temporary.replace(target)
+    log(f"Verified {target.name}: {received / (1024**3):.2f} GiB")
+    return target
+
+
+def get_eval_shards(data_dir: Path) -> list[Path]:
+    attached = Path("/kaggle/input")
+    paths: list[Path] = []
+    for shard in EVAL_SHARDS:
+        local = find_attached_file(attached, {shard["name"]})
+        if local is not None and sha256_file(local) == shard["sha256"]:
+            log(f"Using attached, hash-verified evaluation shard: {local}")
+            paths.append(local)
+        else:
+            paths.append(
+                download_one(
+                    shard["url"],
+                    data_dir / "lichess-evaluations" / shard["name"],
+                    shard["sha256"],
+                )
+            )
+    return paths
+
+
+def get_chessmont_pgn(data_dir: Path) -> Path:
+    configured = os.environ.get("SUMEDHA_HUMAN_PGN", "").strip()
+    if configured:
+        path = Path(configured)
+        if not path.is_file():
+            raise FileNotFoundError(f"SUMEDHA_HUMAN_PGN does not exist: {path}")
+        return path
+
+    attached = find_attached_file(Path("/kaggle/input"), {CHESSMONT_FILE, "chessmont.pgn"})
+    if attached is not None:
+        log(f"Using attached elite human-game corpus: {attached}")
+        return attached
+
+    log("Fetching the prebuilt Chessmont elite PGN file (no games are generated)...")
+    try:
+        import kagglehub
+    except ImportError:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-q", "kagglehub"]
+        )
+        import kagglehub
+
+    output_dir = data_dir / "chessmont"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    result = kagglehub.dataset_download(
+        CHESSMONT_DATASET,
+        path=CHESSMONT_FILE,
+        output_dir=str(output_dir),
+    )
+    result_path = Path(result)
+    if result_path.is_file():
+        return result_path
+    found = find_attached_file(result_path if result_path.is_dir() else output_dir, {CHESSMONT_FILE})
+    if found is None:
+        raise RuntimeError(
+            "KaggleHub did not return chessmont.pgn.zst. Attach the public dataset "
+            f"{CHESSMONT_DATASET} as a Kaggle Input and rerun."
+        )
+    return found
+
+
+def open_text_archive(path: Path):
+    """Open ordinary PGN or Zstandard-compressed PGN as a streaming text handle."""
+    raw = path.open("rb")
+    if path.name.lower().endswith(".zst"):
+        reader = zstandard.ZstdDecompressor().stream_reader(raw, read_size=1024 * 1024)
+        return io.TextIOWrapper(reader, encoding="utf-8", errors="replace")
+    return io.TextIOWrapper(raw, encoding="utf-8", errors="replace")
+
+
+def normalise_fen(fen: str) -> str:
+    fields = fen.strip().split()
+    if len(fields) == 4:
+        fields.extend(["0", "1"])
+    if len(fields) != 6:
+        raise ValueError("Position FEN must contain 4 or 6 fields.")
+    return " ".join(fields)
+
+
+def score_to_value(score_white_cp: float, turn: chess.Color) -> float:
+    score_stm = score_white_cp if turn == chess.WHITE else -score_white_cp
+    return float(np.tanh(np.clip(score_stm, -6000.0, 6000.0) / 600.0))
+
+
+def read_eval_row(row: dict[str, Any]):
+    fen = row.get("fen")
+    line = row.get("line")
+    if not fen or not line:
+        return None
+    try:
+        board = chess.Board(normalise_fen(str(fen)))
+        if not board.is_valid() or board.is_game_over(claim_draw=True):
+            return None
+        first_move = str(line).split()[0]
+        move = chess.Move.from_uci(first_move)
+        if move not in board.legal_moves:
+            return None
+
+        cp = row.get("cp")
+        mate = row.get("mate")
+        if mate is not None:
+            mate = int(mate)
+            white_score = (1 if mate > 0 else -1) * (10000.0 - min(abs(mate), 99) * 100.0)
+        elif cp is not None:
+            white_score = float(cp)
+        else:
+            return None
+
+        return encode_board(board), move_to_index(move), score_to_value(white_score, board.turn)
+    except (ValueError, TypeError, chess.InvalidMoveError, chess.IllegalMoveError):
+        return None
+
+
+def sample_eval_shards(
+    paths: list[Path],
+    limit: int,
+    minimum_depth: int,
+    minimum_knodes: int,
+    rowgroups_per_shard: int,
+    seed: int,
+):
+    """Sample already-evaluated positions from distributed Parquet row groups."""
+    rng = np.random.default_rng(seed)
+    files = [(path, pq.ParquetFile(path)) for path in paths]
+    total_groups = sum(max(1, min(rowgroups_per_shard, parquet.num_row_groups)) for _, parquet in files)
+    per_group = max(1, int(np.ceil(limit / max(1, total_groups))))
+    output = []
+    total_rows_seen = 0
+    total_valid = 0
+
+    for path, parquet in files:
+        group_count = parquet.num_row_groups
+        take_groups = min(rowgroups_per_shard, group_count)
+        chosen_groups = np.linspace(0, group_count - 1, num=take_groups, dtype=int)
+        log(
+            f"Reading pre-calculated evaluations from {path.name}: "
+            f"{take_groups}/{group_count} row groups."
+        )
+        for group_index in chosen_groups:
+            table = parquet.read_row_group(
+                int(group_index),
+                columns=["fen", "line", "depth", "knodes", "cp", "mate"],
+                use_threads=True,
+            )
+            total_rows_seen += table.num_rows
+            mask = pc.and_(
+                pc.greater_equal(table["depth"], minimum_depth),
+                pc.greater_equal(table["knodes"], minimum_knodes),
+            )
+            has_score = pc.or_(pc.is_valid(table["cp"]), pc.is_valid(table["mate"]))
+            table = table.filter(pc.and_(mask, has_score))
+            if table.num_rows == 0:
+                continue
+
+            if table.num_rows > per_group:
+                picked = rng.choice(table.num_rows, size=per_group, replace=False)
+                table = table.take(pa.array(picked, type=pa.int64()))
+
+            for row in table.to_pylist():
+                sample = read_eval_row(row)
+                if sample is None:
+                    continue
+                output.append(sample)
+                total_valid += 1
+                if len(output) >= limit:
+                    break
+            if len(output) >= limit:
+                break
+
+        log(
+            f"  {path.name}: rows read={total_rows_seen:,}; "
+            f"valid samples collected={len(output):,}"
+        )
+        if len(output) >= limit:
             break
 
-    rng.shuffle(positions)
-    rng.shuffle(seeds)
-    return positions[:limit * 3], seeds[:max(200, limit // 2)]
+    rng.shuffle(output)
+    log(f"Precomputed evaluation samples retained: {len(output):,}")
+    return output
 
 
-def _open_pgn(path: Path):
-    if path.name.lower().endswith(".pgn.gz"):
-        return gzip.open(path, "rt", encoding="utf-8", errors="replace")
-    return path.open("rt", encoding="utf-8", errors="replace")
+def result_white_score(result: str) -> float | None:
+    return {
+        "1-0": 1.0,
+        "0-1": -1.0,
+        "1/2-1/2": 0.0,
+    }.get(result)
 
 
-def collect_master_positions(
-    rng: random.Random, limit: int, game_limit: int
-) -> list[str]:
-    """Sample diverse game positions, preferring games where both players are 2200+."""
-    if limit <= 0:
-        return []
-    root = Path("/kaggle/input")
-    files = sorted(
-        p for p in root.rglob("*")
-        if p.is_file() and (p.name.lower().endswith(".pgn") or p.name.lower().endswith(".pgn.gz"))
-    ) if root.exists() else []
-    if not files:
-        log("No PGN inputs found. Attach a PGN dataset to add master-game positions.")
-        return []
-
-    strong: list[str] = []
-    other: list[str] = []
-    cap = max(limit * 5, 1000)
-    seen_games = 0
-    for path in files:
-        log(f"Reading PGN: {path}")
-        try:
-            stream = _open_pgn(path)
-        except Exception as exc:
-            log(f"Skipping unreadable PGN {path}: {exc}")
-            continue
-        with stream:
-            while seen_games < game_limit:
-                try:
-                    game = chess.pgn.read_game(stream)
-                except Exception:
-                    break
-                if game is None:
-                    break
-                seen_games += 1
-                try:
-                    moves = list(game.mainline_moves())
-                    if len(moves) < 10:
-                        continue
-                    # Choose a non-opening position across the game's full length.
-                    lo = min(8, len(moves) - 2)
-                    hi = max(lo, len(moves) - 1)
-                    ply = rng.randint(lo, hi)
-                    board = game.board()
-                    for move in moves[:ply]:
-                        if move not in board.legal_moves:
-                            break
-                        board.push(move)
-                    else:
-                        if not board.is_valid() or not board.legal_moves:
-                            continue
-                        fen = board.fen()
-                        try:
-                            white_elo = int(game.headers.get("WhiteElo", "0"))
-                            black_elo = int(game.headers.get("BlackElo", "0"))
-                        except (TypeError, ValueError):
-                            white_elo = black_elo = 0
-                        bucket = strong if white_elo >= 2200 and black_elo >= 2200 else other
-                        if len(bucket) < cap:
-                            bucket.append(fen)
-                        else:
-                            # Reservoir sampling prevents early-file bias.
-                            index = rng.randrange(seen_games)
-                            if index < cap:
-                                bucket[index] = fen
-                except Exception:
-                    continue
-                if seen_games >= game_limit:
-                    break
-
-    rng.shuffle(strong)
-    rng.shuffle(other)
-    selected = strong[:limit]
-    if len(selected) < limit:
-        selected.extend(other[:limit - len(selected)])
-    log(
-        f"PGN scan: {seen_games} games; {len(strong)} strong-game candidates; "
-        f"{len(selected)} selected positions."
-    )
-    return selected
-
-
-def generate_selfplay_positions(
-    engine: chess.engine.SimpleEngine,
-    rng: random.Random,
-    games: int,
-    max_plies: int,
-    play_nodes: int,
-    opening_seeds: list[str],
-) -> list[str]:
-    """Generate varied Stockfish self-play trajectories at a deliberately cheap budget."""
-    positions: list[str] = []
-    options = engine.options
-    can_set_skill = "Skill Level" in options
-    for game_index in range(games):
-        if opening_seeds and rng.random() < 0.75:
-            board = chess.Board(rng.choice(opening_seeds))
-        else:
-            board = chess.Board()
-            # Tiny legal opening perturbations add variety before teacher play.
-            for _ in range(rng.randint(0, 4)):
-                if board.is_game_over(claim_draw=True):
-                    break
-                board.push(rng.choice(list(board.legal_moves)))
-        if can_set_skill:
-            try:
-                engine.configure({"Skill Level": rng.randint(8, 20)})
-            except Exception:
-                can_set_skill = False
-
-        for _ in range(max_plies):
-            if board.is_game_over(claim_draw=True):
-                break
-            if len(board.move_stack) > 0 and len(board.move_stack) % 2 == 0:
-                # Avoid storing a large number of consecutive near-identical positions.
-                positions.append(board.fen())
-            try:
-                result = engine.play(board, chess.engine.Limit(nodes=play_nodes))
-            except Exception as exc:
-                log(f"Self-play game {game_index + 1} stopped: {exc}")
-                break
-            if result.move is None or result.move not in board.legal_moves:
-                break
-            board.push(result.move)
-
-        if (game_index + 1) % 10 == 0 or game_index + 1 == games:
-            log(f"Self-play games: {game_index + 1}/{games}; positions collected: {len(positions)}")
-    return positions
-
-
-def choose_balanced(
-    sources: dict[str, list[str]], maximum: int, rng: random.Random
-) -> list[tuple[str, str]]:
-    """Select a balanced mix so long self-play runs do not drown out master/opening play."""
-    weights = {"selfplay": 0.40, "opening": 0.25, "master": 0.35}
-    active = [name for name, values in sources.items() if values]
-    if not active:
-        return []
-    if len(active) == 1:
-        weights = {active[0]: 1.0}
-    else:
-        total = sum(weights.get(name, 0.0) for name in active)
-        weights = {name: weights.get(name, 0.0) / total for name in active}
-
-    selected: list[tuple[str, str]] = []
-    used: set[str] = set()
-    for name in active:
-        values = list(dict.fromkeys(sources[name]))
-        rng.shuffle(values)
-        quota = min(len(values), int(maximum * weights[name]))
-        for fen in values[:quota]:
-            if fen not in used:
-                selected.append((name, fen))
-                used.add(fen)
-
-    if len(selected) < maximum:
-        remaining = [
-            (name, fen) for name in active for fen in dict.fromkeys(sources[name])
-            if fen not in used
-        ]
-        rng.shuffle(remaining)
-        selected.extend(remaining[: maximum - len(selected)])
-    rng.shuffle(selected)
-    return selected[:maximum]
-
-
-def label_position(
-    engine: chess.engine.SimpleEngine, fen: str, multipv: int, nodes: int, temperature: float
+def sample_human_games(
+    pgn_path: Path,
+    position_limit: int,
+    games_limit: int,
+    seed: int,
 ):
-    board = chess.Board(fen)
-    if not board.is_valid() or not any(board.legal_moves):
-        return None
+    """Extract played human moves from the prebuilt elite PGN corpus.
+
+    Per accepted game, one opening-phase position and (where possible) one
+    later-game position are sampled. The move is the actual recorded human
+    move; the value target comes from the recorded game result.
+    """
+    rng = random.Random(seed + 31)
+    samples = []
+    games_seen = 0
+    games_used = 0
+    rejected = 0
+    log(f"Reading pre-existing human games from {pgn_path.name}...")
+    stream = open_text_archive(pgn_path)
     try:
-        infos = engine.analyse(
-            board, chess.engine.Limit(nodes=nodes), multipv=multipv
-        )
-    except Exception:
-        return None
-    if isinstance(infos, dict):
-        infos = [infos]
+        while games_seen < games_limit and len(samples) < position_limit:
+            try:
+                game = chess.pgn.read_game(stream)
+            except (ValueError, UnicodeError):
+                rejected += 1
+                continue
+            except zstandard.ZstdError as exc:
+                log(f"Reached the end of the available PGN stream: {exc}")
+                break
+            if game is None:
+                break
+            games_seen += 1
+            if game.errors:
+                rejected += 1
+                continue
 
-    candidate_moves: list[int] = []
-    candidate_scores: list[float] = []
-    legal = set(board.legal_moves)
-    for info in infos:
-        pv = info.get("pv") or []
-        if not pv or pv[0] not in legal or "score" not in info:
-            continue
-        try:
-            score = info["score"].pov(board.turn)
-            cp = score.score(mate_score=10000)
-            if cp is None:
-                cp = 0
-            index = move_to_index(pv[0])
-        except Exception:
-            continue
-        if index in candidate_moves:
-            continue
-        candidate_moves.append(index)
-        candidate_scores.append(float(cp))
+            result_score = result_white_score(game.headers.get("Result", "?"))
+            if result_score is None:
+                continue
+            variant = game.headers.get("Variant", "Standard").lower()
+            if variant not in ("standard", "chess", ""):
+                continue
 
-    if not candidate_moves:
-        return None
-    scores = np.asarray(candidate_scores, dtype=np.float64)
-    scaled = (scores - scores.max()) / max(1.0, temperature)
-    probabilities = np.exp(np.clip(scaled, -40.0, 0.0))
-    probabilities /= probabilities.sum()
-    # Value is from the side-to-move perspective, matching the board encoding.
-    value = float(np.tanh(candidate_scores[0] / 600.0))
-    return (
-        encode_board(board),
-        candidate_moves,
-        probabilities.astype(np.float16),
-        value,
+            try:
+                moves = list(game.mainline_moves())
+            except Exception:
+                rejected += 1
+                continue
+            if len(moves) < 8:
+                continue
+
+            opening_ply = rng.randrange(min(20, len(moves)))
+            later_start = min(20, len(moves) - 1)
+            later_ply = (
+                rng.randrange(later_start, len(moves))
+                if len(moves) > 22 else None
+            )
+            selected = sorted(set([opening_ply] + ([later_ply] if later_ply is not None else [])))
+            board = game.board()
+            wanted = set(selected)
+            game_samples = []
+
+            for ply, move in enumerate(moves):
+                if move not in board.legal_moves:
+                    rejected += 1
+                    game_samples = []
+                    break
+                if ply in wanted:
+                    value = result_score if board.turn == chess.WHITE else -result_score
+                    game_samples.append(
+                        (encode_board(board), move_to_index(move), float(value))
+                    )
+                board.push(move)
+                if len(game_samples) == len(selected):
+                    break
+
+            for sample in game_samples:
+                samples.append(sample)
+                if len(samples) >= position_limit:
+                    break
+            if game_samples:
+                games_used += 1
+
+            if games_seen % 10000 == 0:
+                log(
+                    f"Human games scanned={games_seen:,}/{games_limit:,}; "
+                    f"move samples={len(samples):,}"
+                )
+    finally:
+        stream.close()
+
+    rng.shuffle(samples)
+    log(
+        f"Human corpus: games scanned={games_seen:,}; games used={games_used:,}; "
+        f"samples={len(samples):,}; rejected games={rejected:,}"
     )
+    return samples
+
+
+def pack_samples(eval_samples, human_samples, seed: int):
+    rows = []
+    for x, move, value in eval_samples:
+        rows.append((x, [move], [1.0], value, "precomputed_stockfish"))
+    for x, move, value in human_samples:
+        rows.append((x, [move], [1.0], value, "elite_human_game"))
+
+    rng = random.Random(seed)
+    rng.shuffle(rows)
+    if len(rows) < 32:
+        raise RuntimeError(
+            f"Only {len(rows)} usable samples were extracted. "
+            "Check the archives and increase the source limits."
+        )
+
+    x = np.stack([row[0] for row in rows]).astype(np.float32, copy=False)
+    move_indices = np.asarray([row[1] for row in rows], dtype=np.int32)
+    move_probs = np.asarray([row[2] for row in rows], dtype=np.float32)
+    values = np.asarray([row[3] for row in rows], dtype=np.float32)
+    source_counts = {
+        "precomputed_stockfish": sum(row[4] == "precomputed_stockfish" for row in rows),
+        "elite_human_game": sum(row[4] == "elite_human_game" for row in rows),
+    }
+    return x, move_indices, move_probs, values, source_counts
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True)
-    parser.add_argument("--games", type=int, default=300)
-    parser.add_argument("--max-plies", type=int, default=80)
-    parser.add_argument("--play-nodes", type=int, default=250)
-    parser.add_argument("--nodes", type=int, default=8000)
-    parser.add_argument("--multipv", type=int, default=6)
-    parser.add_argument("--opening-positions", type=int, default=3000)
-    parser.add_argument("--pgn-positions", type=int, default=5000)
-    parser.add_argument("--pgn-game-limit", type=int, default=10000)
-    parser.add_argument("--max-positions", type=int, default=16000)
-    parser.add_argument("--temperature", type=float, default=150.0)
+    parser.add_argument("--eval-positions", type=int, default=350000)
+    parser.add_argument("--human-positions", type=int, default=150000)
+    parser.add_argument("--human-games", type=int, default=150000)
+    parser.add_argument("--minimum-depth", type=int, default=20)
+    parser.add_argument("--minimum-knodes", type=int, default=1000)
+    parser.add_argument("--rowgroups-per-shard", type=int, default=32)
     parser.add_argument("--seed", type=int, default=20261121)
     args = parser.parse_args()
 
-    if min(args.games, args.max_plies, args.play_nodes, args.nodes, args.multipv,
-           args.max_positions) < 1:
-        raise SystemExit("Games, plies, node budgets, MultiPV and max positions must be positive.")
+    if min(
+        args.eval_positions, args.human_positions, args.human_games,
+        args.minimum_depth, args.rowgroups_per_shard,
+    ) < 1:
+        raise SystemExit("Dataset limits and quality thresholds must be positive.")
 
-    rng = random.Random(args.seed)
-    data_dir = Path(os.environ.get("SUMEDHA_DATA_DIR", "/kaggle/working/sumedha-data"))
+    data_dir = Path(os.environ.get("SUMEDHA_DATA_DIR", "/kaggle/working/sumedha-data-v2"))
     data_dir.mkdir(parents=True, exist_ok=True)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    log("Collecting curated chess opening positions (Lichess dataset, CC0)...")
-    opening_fens, opening_seeds = download_opening_positions(rng, args.opening_positions)
-    log(f"Opening positions: {len(opening_fens)}; self-play seed positions: {len(opening_seeds)}")
+    log("DATA MODE: precomputed archives only. Stockfish will NOT be started.")
+    log("Source 1: Lichess Stockfish evaluation Parquet shards, approximately 6.6 GB.")
+    log("Source 2: Chessmont's prebuilt 21.5M elite human-game PGN corpus.")
 
-    log("Sampling positions from attached PGN collections...")
-    master_fens = collect_master_positions(rng, args.pgn_positions, args.pgn_game_limit)
+    eval_paths = get_eval_shards(data_dir)
+    human_pgn = get_chessmont_pgn(data_dir)
 
-    stockfish = ensure_stockfish(data_dir / "engine")
-    engine = chess.engine.SimpleEngine.popen_uci(str(stockfish), timeout=60)
-    try:
-        threads = max(1, min(2, (os.cpu_count() or 2) // 2))
-        engine.configure({"Threads": threads, "Hash": 512})
-        log(f"Generating {args.games} self-play games (teacher play budget: {args.play_nodes} nodes/move)...")
-        selfplay_fens = generate_selfplay_positions(
-            engine, rng, args.games, args.max_plies, args.play_nodes, opening_seeds
+    eval_samples = sample_eval_shards(
+        eval_paths,
+        limit=args.eval_positions,
+        minimum_depth=args.minimum_depth,
+        minimum_knodes=args.minimum_knodes,
+        rowgroups_per_shard=args.rowgroups_per_shard,
+        seed=args.seed,
+    )
+    human_samples = sample_human_games(
+        human_pgn,
+        position_limit=args.human_positions,
+        games_limit=args.human_games,
+        seed=args.seed,
+    )
+
+    x, moves, probs, values, source_counts = pack_samples(
+        eval_samples, human_samples, args.seed
+    )
+    metadata = {
+        "project": "SUMEDHA AI",
+        "schema_version": 2,
+        "position_count": int(len(values)),
+        "sources": source_counts,
+        "eval_source": "Lichess/chess-position-evaluations",
+        "eval_source_license": "CC0-1.0",
+        "eval_shards": [p.name for p in eval_paths],
+        "human_source": CHESSMONT_DATASET,
+        "human_source_file": human_pgn.name,
+        "human_source_license": "CC BY-SA 4.0 (as declared by Chessmont Open Database)",
+        "stockfish_runtime_used": False,
+        "teacher_labels": "precomputed Lichess evaluations; no engine search performed",
+        "human_policy_labels": "moves recorded in the source PGN; no moves generated",
+        "created_utc": __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc
+        ).isoformat(),
+    }
+
+    temporary = output.with_suffix(output.suffix + ".tmp")
+    with temporary.open("wb") as stream:
+        np.savez(
+            stream,
+            x=x,
+            move_indices=moves,
+            move_probs=probs,
+            values=values,
+            metadata=np.asarray(json.dumps(metadata)),
         )
-
-        sources = {
-            "selfplay": selfplay_fens,
-            "opening": opening_fens,
-            "master": master_fens,
-        }
-        selected = choose_balanced(sources, args.max_positions, rng)
-        log(
-            "Selected positions: " + ", ".join(
-                f"{name}={sum(1 for source, _ in selected if source == name)}"
-                for name in ("selfplay", "opening", "master")
-            )
-        )
-        if len(selected) < 32:
-            raise RuntimeError(
-                f"Only {len(selected)} unique positions were collected. "
-                "Check Kaggle Internet and increase SUMEDHA_GAMES or opening data."
-            )
-
-        x_rows: list[np.ndarray] = []
-        move_rows: list[list[int]] = []
-        probability_rows: list[list[float]] = []
-        value_rows: list[float] = []
-        kept_sources: dict[str, int] = {"selfplay": 0, "opening": 0, "master": 0}
-
-        log(f"Labelling {len(selected)} positions with Stockfish MultiPV={args.multipv}, nodes={args.nodes}...")
-        for number, (source, fen) in enumerate(selected, 1):
-            row = label_position(
-                engine, fen, args.multipv, args.nodes, args.temperature
-            )
-            if row is None:
-                continue
-            board_x, indices, probabilities, value = row
-            # Pad to a fixed candidate count; zero probabilities make padding inert.
-            k = args.multipv
-            indices = indices[:k]
-            probabilities = probabilities[:k]
-            padded_indices = indices + [0] * (k - len(indices))
-            padded_probabilities = probabilities.tolist() + [0.0] * (k - len(probabilities))
-            x_rows.append(board_x)
-            move_rows.append(padded_indices)
-            probability_rows.append(padded_probabilities)
-            value_rows.append(value)
-            kept_sources[source] += 1
-
-            if number % 100 == 0 or number == len(selected):
-                log(f"Teacher labels: {number}/{len(selected)}; valid: {len(x_rows)}")
-
-        if len(x_rows) < 32:
-            raise RuntimeError(f"Stockfish successfully labelled only {len(x_rows)} positions.")
-
-        metadata = {
-            "project": "SUMEDHA AI",
-            "schema_version": 1,
-            "position_count": len(x_rows),
-            "sources": kept_sources,
-            "stockfish": "Stockfish 19",
-            "stockfish_release": "sf_19",
-            "stockfish_archive_sha256": STOCKFISH_SHA256,
-            "teacher_nodes": args.nodes,
-            "teacher_multipv": args.multipv,
-            "policy_temperature_cp": args.temperature,
-            "created_utc": __import__("datetime").datetime.now(
-                __import__("datetime").timezone.utc
-            ).isoformat(),
-        }
-        temp_output = output.with_suffix(output.suffix + ".tmp")
-        with temp_output.open("wb") as stream:
-            np.savez(
-                stream,
-                x=np.stack(x_rows).astype(np.float16),
-                move_indices=np.asarray(move_rows, dtype=np.int32),
-                move_probs=np.asarray(probability_rows, dtype=np.float16),
-                values=np.asarray(value_rows, dtype=np.float32),
-                metadata=np.asarray(json.dumps(metadata)),
-            )
-        os.replace(temp_output, output)
-        log(f"DATASET READY: {output} ({len(x_rows)} positions)")
-        log(json.dumps(metadata, indent=2))
-    finally:
-        engine.quit()
+    os.replace(temporary, output)
+    log(f"PRECOMPUTED DATASET READY: {output}")
+    log(f"Total samples: {len(values):,}")
+    log(json.dumps(metadata, indent=2))
 
 
 if __name__ == "__main__":
