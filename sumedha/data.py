@@ -29,23 +29,23 @@ import zstandard
 
 from .encoding import encode_board, move_to_index
 
-# Three fixed 2.19–2.22 GB shards: approximately 6.6 GB of pre-calculated
+# Three fixed 2.19–2.22 GB shards: approximately 6.5 GB of pre-calculated
 # Stockfish evaluations. Hashes are checked before any position is consumed.
 EVAL_SHARDS = (
     {
-        "name": "0000.parquet",
-        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/refs%2Fconvert%2Fparquet/default/train/0000.parquet",
-        "sha256": "b076e82c6d108a4c2cb7036f694b9e20e8cc94684ccd6439f1ded731c20b34fe",
+        "name": "data_0000.parquet",
+        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/main/data/data_0000.parquet",
+        "sha256": "b9306270a185eee925863b34f9d6d3d7c9b1ba772df251b2c76d421f7cf13d3b",
     },
     {
-        "name": "0001.parquet",
-        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/refs%2Fconvert%2Fparquet/default/train/0001.parquet",
-        "sha256": "f05591306dc10ec64ba0bf87d9124ed1e166a0d12b7bd02bc9e8f90333c695c3",
+        "name": "data_0001.parquet",
+        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/main/data/data_0001.parquet",
+        "sha256": "e5def35cb4ab5229019540c194e15740cd6a877a0871e655cecaca85efa1638a",
     },
     {
-        "name": "0011.parquet",
-        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/refs%2Fconvert%2Fparquet/default/train/0011.parquet",
-        "sha256": "fee93797a3d5e098b40c53e55e58ad609aac3f4b32b29b5c38dde74cdf0187a5",
+        "name": "data_0011.parquet",
+        "url": "https://huggingface.co/datasets/Lichess/chess-position-evaluations/resolve/main/data/data_0011.parquet",
+        "sha256": "b9b6c20a2b7afa3cc251f339046a03332af09821009ce76192548d44efc4114b",
     },
 )
 CHESSMONT_DATASET = "chessmontdb/chessmont-big-dataset"
