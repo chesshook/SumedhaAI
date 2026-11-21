@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import random
 import tempfile
@@ -184,6 +185,14 @@ def main():
             scheduler.load_state_dict(checkpoint["scheduler"])
         if "scaler" in checkpoint:
             scaler.load_state_dict(checkpoint["scaler"])
+        # Extend the cosine schedule when a later Kaggle session requests more epochs.
+        # Otherwise a resumed run would inherit the old schedule's near-zero final LR.
+        if args.epochs > scheduler.T_max:
+            scheduler.T_max = args.epochs
+            position = min(scheduler.last_epoch, scheduler.T_max)
+            factor = (1.0 + math.cos(math.pi * position / scheduler.T_max)) / 2.0
+            for group, base_lr in zip(optimizer.param_groups, scheduler.base_lrs):
+                group["lr"] = scheduler.eta_min + (base_lr - scheduler.eta_min) * factor
         start_epoch = int(checkpoint.get("epoch", -1)) + 1
         best_validation = float(checkpoint.get("best_validation", best_validation))
         global_step = int(checkpoint.get("global_step", 0))
