@@ -46,7 +46,7 @@ Set environment variables before running the one-cell launcher to adjust resourc
 
 | Variable | Default | Meaning |
 |---|---:|---|
-| `SUMEDHA_GAMES` | 300 | Stockfish-vs-Stockfish games |
+| `SUMEDHA_REBUILD_DATA` | 0 | Set to `1` to regenerate the dataset from current inputs/settings |\n| `SUMEDHA_GAMES` | 300 | Stockfish-vs-Stockfish games |
 | `SUMEDHA_MAX_PLIES` | 80 | Maximum half-moves per generated game |
 | `SUMEDHA_PLAY_NODES` | 250 | Cheap Stockfish nodes per move when generating games |
 | `SUMEDHA_NODES` | 8000 | Stockfish nodes per labelled position |
@@ -61,7 +61,7 @@ Set environment variables before running the one-cell launcher to adjust resourc
 | `SUMEDHA_BLOCKS` | 6 | Number of residual blocks |
 | `SUMEDHA_WORKERS` | 2 | Data-loader workers per GPU |
 
-For a quick smoke run, reduce games, positions, nodes, epochs, channels and blocks. For stronger training, grow the dataset substantially and continue from saved checkpoints. The default data build targets up to 16,000 labelled positions; it is a substantial starter corpus, not a billion-position engine training run. A single Kaggle run is not enough to reproduce the scale of AlphaZero or Leela Chess Zero.
+For a quick smoke run, reduce games, positions, nodes, epochs, channels and blocks. For a new dataset after attaching additional PGN files or changing the data-generation settings, set `SUMEDHA_REBUILD_DATA=1`; otherwise the saved dataset is deliberately reused. For stronger training, grow the dataset substantially and continue from saved checkpoints. The default data build targets up to 16,000 labelled positions; it is a substantial starter corpus, not a billion-position engine training run. A single Kaggle run is not enough to reproduce the scale of AlphaZero or Leela Chess Zero.
 
 ## Use the trained network
 
