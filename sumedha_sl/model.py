@@ -58,7 +58,7 @@ class Searchless270M:
 
     STEP = 6_400_000
     RETURN_BUCKETS = 128
-    WIN_PROB_CP_SCALE = 0.00184104
+    WIN_PROB_CP_SCALE = 0.00368208
 
     def __init__(
         self,
