@@ -9,6 +9,12 @@ echo " SUMEDHA-SL+AB | prepare frozen Searchless 270M + search core"
 echo "=============================================================="
 
 python -m pip install --upgrade pip
+
+# Kaggle images may preinstall the CUDA 13 JAX plugin. Installing the CUDA 12
+# extra alongside it can make both plugins register the same "cuda" PJRT API.
+# This build pins the CUDA 12 JAX extra, so remove only the conflicting CUDA 13
+# plugin packages before installing the matching runtime.
+python -m pip uninstall -y jax-cuda13-plugin jax-cuda13-pjrt || true
 python -m pip install -r requirements-sl.txt
 
 mkdir -p third_party checkpoints
