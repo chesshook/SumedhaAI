@@ -33,6 +33,10 @@ python -m sumedha_sl.uci --checkpoint-dir checkpoints/270M --vendor-dir third_pa
 
 The UCI process loads the frozen model and responds to standard `uci`, `isready`, `position`, `go`, `stop` and `quit` commands. It is suitable for a UCI-compatible chess GUI on the same machine.
 
+## Two-GPU inference
+
+The current inference bridge replicates the frozen parameters on each visible GPU and explicitly shards the candidate-action batch across the GPUs using JAX `Mesh` and `NamedSharding`. This is data-parallel inference: each GPU stores a full model copy; GPU memory is not pooled. A 32-sequence batch is split across the two T4s when both are visible. This is intended to accelerate legal-action evaluation; search-tree traversal remains CPU-orchestrated and sequential in this first version.
+
 ## Important implementation details
 
 Searchless action values are predicted win-probability distributions from the side-to-move perspective. SUMEDHA computes the expected value over the 128 published return buckets. For alpha-beta, it maps that expected probability back to an approximate centipawn scale using the inverse of Searchless' published centipawn-to-win-probability transform.
