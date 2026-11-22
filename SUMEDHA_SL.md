@@ -37,7 +37,7 @@ The UCI process loads the frozen model and responds to standard `uci`, `isready`
 
 Searchless action values are predicted win-probability distributions from the side-to-move perspective. SUMEDHA computes the expected value over the 128 published return buckets. For alpha-beta, it maps that expected probability back to an approximate centipawn scale using the inverse of Searchless' published centipawn-to-win-probability transform.
 
-At a search node, action values order all legal moves. At the search horizon, the best predicted action value is used as the static position evaluation. Negamax flips perspective at every ply. Terminal checkmate/draw outcomes come from python-chess rules, not the neural network.
+At a search node, action values order all legal moves. At the search horizon, the best predicted action value is used as the static position evaluation. Before iterative deepening, the root's highest-valued legal action is retained as a safe fallback if the first search iteration cannot finish within a very short time budget. Negamax flips perspective at every ply. Terminal checkmate/draw outcomes come from python-chess rules, not the neural network.
 
 The first version intentionally avoids null-move pruning and aggressive selective search. Late-move reductions are conservative and can be disabled in code for comparison. Search results are experimental and must be benchmarked; this commit does not claim a particular Elo.
 
