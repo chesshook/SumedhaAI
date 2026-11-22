@@ -12,13 +12,14 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements-sl.txt
 
 mkdir -p third_party checkpoints
+SEARCHLESS_COMMIT="90ae0e6b121673fc3079aaeffa047580bb600c0a"
 if [[ ! -d third_party/searchless_chess/.git ]]; then
   echo "[1/3] Fetching official Google DeepMind Searchless Chess source..."
-  git clone --depth 1 https://github.com/google-deepmind/searchless_chess.git third_party/searchless_chess
-else
-  echo "[1/3] Updating official Searchless Chess source..."
-  git -C third_party/searchless_chess pull --ff-only
+  git clone https://github.com/google-deepmind/searchless_chess.git third_party/searchless_chess
 fi
+git -C third_party/searchless_chess fetch --depth 1 origin "$SEARCHLESS_COMMIT"
+git -C third_party/searchless_chess checkout --detach "$SEARCHLESS_COMMIT"
+echo "Pinned Searchless source: $SEARCHLESS_COMMIT"
 
 CHECKPOINT_DIR="$ROOT/checkpoints/270M"
 if [[ ! -d "$CHECKPOINT_DIR/6400000/params" ]]; then
