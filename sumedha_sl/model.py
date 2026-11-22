@@ -64,7 +64,7 @@ class Searchless270M:
         self,
         checkpoint_dir: str | Path,
         vendor_dir: str | Path = "third_party",
-        batch_size: int = 32,
+        batch_size: int = 64,
         cache_size: int = 50_000,
     ):
         if batch_size < 1:
@@ -78,7 +78,6 @@ class Searchless270M:
 
         self.jax = jax
         self.jnp = jnp
-        self.batch_size = int(batch_size)
         self.cache_size = int(cache_size)
         self._cache: OrderedDict[tuple, Dict[str, float]] = OrderedDict()
 
@@ -120,7 +119,33 @@ class Searchless270M:
             str(params_path), restore_args=restore_args
         )
 
-        self.predict = jax.jit(predictor.predict)
+        # Data-parallel inference: replicate the frozen 270M parameters and
+        # shard the candidate-action batch across every visible GPU. This is
+        # not model parallelism; each GPU holds a full copy of the weights.
+        gpu_devices = [device for device in jax.devices()
+                       if device.platform in ("gpu", "cuda")]
+        self.devices = gpu_devices or [jax.devices()[0]]
+        device_count = len(self.devices)
+        self.batch_size = max(
+            device_count,
+            ((int(batch_size) + device_count - 1) // device_count) * device_count,
+        )
+
+        from jax.sharding import Mesh, NamedSharding, PartitionSpec
+        self.mesh = Mesh(np.asarray(self.devices, dtype=object), ("batch",))
+        self.param_sharding = NamedSharding(self.mesh, PartitionSpec())
+        self.batch_sharding = NamedSharding(
+            self.mesh, PartitionSpec("batch", None)
+        )
+        self.params = jax.device_put(self.params, self.param_sharding)
+
+        def predict_batch(params, targets):
+            return predictor.predict(params=params, targets=targets, rng=None)
+
+        self.predict = jax.jit(
+            predict_batch,
+            in_shardings=(self.param_sharding, self.batch_sharding),
+        )
         _, self.return_bucket_values = self.utils.get_uniform_buckets_edges_values(
             self.RETURN_BUCKETS
         )
@@ -131,7 +156,8 @@ class Searchless270M:
         devices = jax.devices()
         print(
             f"[SUMEDHA] Loaded Searchless 270M step {self.STEP}; "
-            f"JAX devices={devices}; batch={self.batch_size}",
+            f"JAX devices={self.devices}; data-parallel GPUs={len(gpu_devices)}; "
+            f"batch={self.batch_size}",
             file=sys.stderr,
             flush=True,
         )
@@ -167,11 +193,11 @@ class Searchless270M:
             if count < self.batch_size:
                 padding = np.repeat(chunk[-1:], self.batch_size - count, axis=0)
                 chunk = np.concatenate([chunk, padding], axis=0)
-            output = self.predict(
-                params=self.params,
-                targets=self.jnp.asarray(chunk, dtype=self.jnp.int32),
-                rng=None,
+            target_batch = jax.device_put(
+                self.jnp.asarray(chunk, dtype=self.jnp.int32),
+                self.batch_sharding,
             )
+            output = self.predict(self.params, target_batch)
             log_probs = np.asarray(self.jax.device_get(output[:, -1, :]))
             results.append(log_probs[:count])
         return np.concatenate(results, axis=0)
