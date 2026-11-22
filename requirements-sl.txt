@@ -1,0 +1,8 @@
+# Minimal inference dependencies for the official Searchless 270M model.
+# Install in a clean Linux environment (Kaggle/WSL2 recommended for NVIDIA GPU).
+jax[cuda12]
+dm-haiku
+orbax-checkpoint
+jaxtyping
+python-chess>=1.999
+numpy>=1.26
