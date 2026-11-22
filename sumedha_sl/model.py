@@ -64,7 +64,7 @@ class Searchless270M:
         self,
         checkpoint_dir: str | Path,
         vendor_dir: str | Path = "third_party",
-        batch_size: int = 64,
+        batch_size: int = 32,
         cache_size: int = 50_000,
     ):
         if batch_size < 1:
