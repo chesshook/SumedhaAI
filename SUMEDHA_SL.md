@@ -21,7 +21,7 @@ Select **GPU T4 x2** and enable Internet. In a notebook cell:
 !bash scripts/prepare_sumedha_sl.sh
 ```
 
-The setup installs only inference dependencies, fetches the official Searchless source, downloads the 270M checkpoint and runs the search-core self-test. The checkpoint is approximately billion-parameter-scale storage; allow enough Kaggle disk space.
+The setup installs only inference dependencies, fetches the official Searchless source, downloads the 270M checkpoint and runs the search-core self-test. The checkpoint is a large archive; confirm Kaggle working-disk space before downloading and keep the extracted checkpoint in Notebook Output if you need it in a later session.
 
 Current JAX documentation supports CUDA 12 on NVIDIA GPUs with SM 5.2 or newer; T4 is SM 7.5. The CUDA-enabled JAX path is Linux. Native Windows GPU JAX is not supported; use Kaggle or WSL2 for NVIDIA acceleration.
 
