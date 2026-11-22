@@ -35,7 +35,7 @@ def _upstream_imports(vendor_dir: Path):
     if not vendor_dir.is_dir():
         raise FileNotFoundError(
             f"Missing upstream checkout: {vendor_dir}. "
-            "Run scripts/setup_searchless_kaggle.sh first."
+            "Run scripts/prepare_sumedha_sl.sh first."
         )
     if str(vendor_dir) not in sys.path:
         sys.path.insert(0, str(vendor_dir))
