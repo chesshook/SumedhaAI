@@ -28,7 +28,7 @@ def main() -> int:
     parser.add_argument("--depth", type=int, default=4)
     parser.add_argument("--seconds", type=float, default=30.0)
     parser.add_argument("--positions", type=int, default=len(POSITIONS))
-    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--batch-size", type=int, default=32)
     args = parser.parse_args()
 
     if args.depth < 1 or args.seconds <= 0 or args.positions < 1:
