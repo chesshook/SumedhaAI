@@ -232,6 +232,8 @@ class SearchlessPVS:
         self, board: chess.Board, alpha: int, beta: int, ply: int, qply: int
     ) -> int:
         self._visit()
+        if ply < len(self.pv_table):
+            self.pv_table[ply] = []
         terminal = self._terminal_score(board, ply)
         if terminal is not None:
             return terminal
@@ -246,7 +248,21 @@ class SearchlessPVS:
                 alpha = stand_pat
 
         if qply >= self.max_qply:
-            return self._static_eval(board) if in_check else stand_pat
+            if not in_check:
+                return stand_pat
+            # At the safety cap, still examine every legal check evasion once.
+            evasions = list(board.legal_moves)
+            if not evasions:
+                return -MATE + ply
+            best_evasion = -INF
+            for evasion in evasions:
+                board.push(evasion)
+                try:
+                    score = -self._static_eval(board)
+                finally:
+                    board.pop()
+                best_evasion = max(best_evasion, score)
+            return best_evasion
 
         moves, values = self._action_values(board)
         if not moves:
@@ -297,6 +313,7 @@ class SearchlessPVS:
             self.pv_table[ply] = []
 
         alpha_original = alpha
+        beta_original = beta
         key = self._tt_key(board)
         entry = self.tt.get(key)
         tt_move = entry.best_move if entry else None
@@ -370,7 +387,7 @@ class SearchlessPVS:
         bound = 0
         if best_score <= alpha_original:
             bound = 2
-        elif best_score >= beta:
+        elif best_score >= beta_original:
             bound = 1
 
         if len(self.tt) >= self.tt_max_entries:
