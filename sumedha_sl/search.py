@@ -430,6 +430,19 @@ class SearchlessPVS:
         completed_depth = 0
         best_pv: list[chess.Move] = []
 
+        # Establish a neural-policy fallback before starting deeper search.
+        # If one transformer inference exceeds a very short move budget, the
+        # engine still returns its best Searchless-ranked legal root move.
+        try:
+            self._check_stop()
+            root_moves, root_values = self._action_values(board)
+            if root_moves:
+                best_move = max(
+                    root_moves, key=lambda move: root_values[move.uci()]
+                )
+        except SearchStopped:
+            pass
+
         for depth in range(1, max_depth + 1):
             try:
                 score = self._negamax(board, depth, -INF, INF, 0)
